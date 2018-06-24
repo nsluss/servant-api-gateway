@@ -1,0 +1,6 @@
+.stack-work/
+servant-api-gateway.cabal
+*~
+deploy.yaml
+borken.deploy.yaml
+deploy.json
