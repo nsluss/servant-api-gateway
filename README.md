@@ -2,7 +2,7 @@
 
 This is currently a very rough cut and not usable for anything other than proof of concept.
 
-All we can do so far is generate a cloud formation template for a single route.
+All we can do so far is generate a cloud formation template with mock endpoints for get requests.
 
 ### example
 ``` haskell
