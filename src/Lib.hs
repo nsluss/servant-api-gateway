@@ -2,7 +2,8 @@ module Lib where
 
 import Prelude hiding (writeFile)
 
-import Control.Monad.State (evalState, State, get, state)
+import Control.Monad.State (evalState, State, get, put)
+import Control.Monad.Writer (WriterT, runWriterT, tell)
 import Data.Aeson
 import Data.ByteString.Lazy hiding (pack)
 import Data.Monoid ((<>))
@@ -28,38 +29,39 @@ type TestMulti = "a" :> Get '[JSON] ()
             :<|> "b" :> Get '[JSON] ()
 
 class HasDeployment api where
-  template :: Proxy api -> ApiContext -> State [Text] [(Text, Value)]
+  template :: Proxy api -> WriterT [Text] (State ApiContext) [(Text, Value)]
 
 instance (HasDeployment a, HasDeployment b) => HasDeployment (a :<|> b) where
-  template Proxy ctx = do
+  template Proxy = do
     let
       proxyA = Proxy :: Proxy a
       proxyB = Proxy :: Proxy b
-    templateA <- template proxyA ctx
-    templateB <- template proxyB ctx
+    templateA <- template proxyA
+    templateB <- template proxyB
     pure $ templateA <> templateB
 
 instance (KnownSymbol head, HasDeployment tail) => HasDeployment (head :> tail) where
-  template Proxy c@(Context api parent pRoot) = do
+  template Proxy = do
+    c@(Context api parent pRoot) <- get
     let
       headTemplate = (resourceName, resource)
-    tailTemplate <- template remainingPath newContext
-    pure $ headTemplate : tailTemplate
-      where
-        newContext = c { parentName = resourceName, parentIsRoot = False }
-        resourceName = currentPathPart <> "Resource"
-        currentPathPart = pack $ symbolVal pathPartSymbol
-        pathPartSymbol = Proxy :: Proxy head
-        remainingPath = Proxy :: Proxy tail
-        rootResource = getAtt api "RootResourceId"
-        resource = object [
-          "Type" .= String "AWS::ApiGateway::Resource",
-          "Properties" .= object [
-            "ParentId" .= if pRoot then rootResource else ref parent,
-            "PathPart" .= currentPathPart,
-            "RestApiId" .= ref api
-          ]
+      newContext = c { parentName = resourceName, parentIsRoot = False }
+      resourceName = currentPathPart <> "Resource"
+      currentPathPart = pack $ symbolVal pathPartSymbol
+      pathPartSymbol = Proxy :: Proxy head
+      remainingPath = Proxy :: Proxy tail
+      rootResource = getAtt api "RootResourceId"
+      resource = object [
+        "Type" .= String "AWS::ApiGateway::Resource",
+        "Properties" .= object [
+          "ParentId" .= if pRoot then rootResource else ref parent,
+          "PathPart" .= currentPathPart,
+          "RestApiId" .= ref api
          ]
+        ]
+    put newContext
+    tailTemplate <- template remainingPath
+    pure $ headTemplate : tailTemplate
 
 ref :: Text -> Value
 ref resource = object ["Ref" .= String resource]
@@ -67,12 +69,10 @@ ref resource = object ["Ref" .= String resource]
 getAtt :: Text -> Text -> Value
 getAtt resource prop = object ["Fn::GetAtt" .= (Array $ fromList [String resource, String prop])]
 
-instance HasDeployment () where
-  template _ _ = pure []
-
 instance HasDeployment (Verb 'GET 200 c d) where
-  template _ (Context api parent _) = state (\s -> ([(name, method)], name:s))
-    where
+  template _ = do
+    (Context api parent _)  <- get
+    let
       name = parent <> "GET"
       method = object [
         "Type" .= String "AWS::ApiGateway::Method",
@@ -91,22 +91,23 @@ instance HasDeployment (Verb 'GET 200 c d) where
           ]
         ]
        ]
+    tell [name]
+    pure [(name, method)]
 
 deploy :: (HasDeployment api) => Text -> Proxy api -> ByteString
-deploy name p@Proxy = encode $ (flip evalState) [] $ do
-  let
-    apiName = name <> "Api"
+deploy name p@Proxy = encode $ object [ "Resources" .= (object $ baseTemplate <> templateBody) ]
+  where
+    baseTemplate = restApiTemplate apiName deps
+    (templateBody, deps) = (flip evalState) ctx $ runWriterT program
     ctx = Context apiName apiName True
-  routes <- template p ctx
-  apiTemplate <- restApiTemplate apiName
-  pure $ object [ "Resources" .= (object $ apiTemplate <> routes) ]
+    apiName = name <> "Api"
+    program = template p
 
 mkDeployFile = writeFile "./deploy.json" $ deploy "Test" (Proxy :: Proxy TestMulti)
 
-restApiTemplate :: Text -> State [Text] [(Text, Value)]
-restApiTemplate name = do
-  dependencies  <- get
-  pure [
+restApiTemplate :: Text -> [Text] -> [(Text, Value)]
+restApiTemplate name dependencies = do
+  [
     name .= object [
       "Type" .= String "AWS::ApiGateway::RestApi",
       "Properties" .= object [
