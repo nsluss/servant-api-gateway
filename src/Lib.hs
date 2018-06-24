@@ -18,12 +18,6 @@ someFunc = print "someFunc"
 
 data ApiContext = Context { apiName :: Text, parentName :: Text, parentIsRoot :: Bool }
 
-data ApiPart =
-  Resource {
-    pathPart :: Text
-  , name :: Text
-  } | End
-
 type TestApi = "Test" :> "Api" :> "Endpoint" :> Get '[JSON] ()
 type TestMulti = "a" :> Get '[JSON] ()
             :<|> "b" :> Get '[JSON] ()
