@@ -23,9 +23,17 @@ data ApiPart =
   } | End
 
 type TestApi = "Test" :> "Api" :> "Endpoint" :> Get '[JSON] ()
+type TestMulti = "a" :> Get '[JSON] ()
+            :<|> "b" :> Get '[JSON] ()
 
 class HasDeployment api where
   template :: Proxy api -> ApiContext -> [(Text, Value)]
+
+instance (HasDeployment a, HasDeployment b) => HasDeployment (a :<|> b) where
+  template Proxy ctx = template proxyA ctx <> template proxyB ctx
+    where
+      proxyA = Proxy :: Proxy a
+      proxyB = Proxy :: Proxy b
 
 instance (KnownSymbol head, HasDeployment rest) => HasDeployment (head :> rest) where
   template Proxy c@(Context api parent pRoot) = (resourceName, resource) : template remainingPath newContext
@@ -84,7 +92,7 @@ deploy name p@Proxy = encode $ object [
         apiName = name <> "Api"
         ctx = Context apiName apiName True
 
-mkDeployFile = writeFile "./deploy.json" $ deploy "Test" (Proxy :: Proxy TestApi)
+mkDeployFile = writeFile "./deploy.json" $ deploy "Test" (Proxy :: Proxy TestMulti)
 
 restApiTemplate :: Text -> [(Text, Value)]
 restApiTemplate name = [
@@ -96,7 +104,7 @@ restApiTemplate name = [
   ],
   (name <> "Deployment") .= object [
     "Type" .= String "AWS::ApiGateway::Deployment",
-    "DependsOn" .= (fromList [String "EndpointResourceGET"]),
+    "DependsOn" .= (fromList [String "aResourceGET", String "bResourceGET"]),
     "Properties" .= object [
       "RestApiId" .= ref name,
       "StageName" .= String "default"
