@@ -8,6 +8,8 @@ import Data.Aeson
 import Data.ByteString.Lazy hiding (pack)
 import Data.Monoid ((<>))
 import Data.Proxy
+import Data.Set (Set)
+import qualified Data.Set as S
 import Data.Text
 import Data.Vector (fromList)
 import GHC.TypeLits
@@ -16,11 +18,13 @@ import Servant.API
 someFunc :: IO ()
 someFunc = print "someFunc"
 
-data ApiContext = Context { apiName :: Text, parentName :: Text, parentIsRoot :: Bool }
+data ApiContext = Context { apiName :: Text, parentName :: Text, parentIsRoot :: Bool, resources :: Set Text }
 
 type TestApi = "Test" :> "Api" :> "Endpoint" :> Get '[JSON] ()
 type TestMulti = "a" :> Get '[JSON] ()
-            :<|> "b" :> Get '[JSON] ()
+            :<|> "b" :> "c" :> Get '[JSON] ()
+            :<|> "b" :> "c" :> "d1" :> Get '[JSON] ()
+            :<|> "b" :> "d1" :> "c" :> Get '[JSON] ()
 
 class HasDeployment api where
   template :: Proxy api -> WriterT [Text] (State ApiContext) [(Text, Value)]
@@ -36,7 +40,7 @@ instance (HasDeployment a, HasDeployment b) => HasDeployment (a :<|> b) where
 
 instance (KnownSymbol head, HasDeployment tail) => HasDeployment (head :> tail) where
   template Proxy = do
-    c@(Context api parent pRoot) <- get
+    c@(Context api parent pRoot rs) <- get
     let
       headTemplate = (resourceName, resource)
       newContext = c { parentName = resourceName, parentIsRoot = False }
@@ -55,7 +59,13 @@ instance (KnownSymbol head, HasDeployment tail) => HasDeployment (head :> tail) 
         ]
     put newContext
     tailTemplate <- template remainingPath
-    pure $ headTemplate : tailTemplate
+    if (S.member resourceName rs)
+      then do
+        put newContext
+        pure tailTemplate
+      else do
+        put (newContext { resources = S.insert resourceName rs })
+        pure $ headTemplate : tailTemplate
 
 ref :: Text -> Value
 ref resource = object ["Ref" .= String resource]
@@ -63,9 +73,9 @@ ref resource = object ["Ref" .= String resource]
 getAtt :: Text -> Text -> Value
 getAtt resource prop = object ["Fn::GetAtt" .= (Array $ fromList [String resource, String prop])]
 
-instance HasDeployment (Verb 'GET 200 c d) where
+instance HasDeployment (Verb 'GET status c m) where
   template _ = do
-    (Context api parent _)  <- get
+    (Context api parent _ _)  <- get
     let
       name = parent <> "GET"
       method = object [
@@ -93,7 +103,7 @@ deploy name p@Proxy = encode $ object [ "Resources" .= (object $ baseTemplate <>
   where
     baseTemplate = restApiTemplate apiName deps
     (templateBody, deps) = (flip evalState) ctx $ runWriterT program
-    ctx = Context apiName apiName True
+    ctx = Context apiName apiName True S.empty
     apiName = name <> "Api"
     program = template p
 
