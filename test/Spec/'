@@ -1,0 +1,17 @@
+module Spec.HasDeploy where
+
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (testCase, (@?=), Assertion)
+
+(===) :: (Eq a, Show a) => a -> a -> Assertion
+(===) = (@?=)
+infixl 1 ===
+
+tests :: TestTree
+tests = testGroup "HasDeploy" $ [
+    testCase "tests are set up properly" $ do
+      let
+        actual = True
+        expected = False
+      actual === expected
+  ]

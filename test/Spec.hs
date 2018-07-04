@@ -1,2 +1,10 @@
+import Test.Tasty (TestTree, testGroup, defaultMain)
+import qualified Spec.HasDeploy as Deploy
+
 main :: IO ()
-main = putStrLn "Test suite not yet implemented"
+main = defaultMain tests
+
+tests :: TestTree
+tests = testGroup "servant-api-gateway" [
+    Deploy.tests
+  ]
